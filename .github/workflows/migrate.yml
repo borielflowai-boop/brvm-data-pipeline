@@ -1,0 +1,40 @@
+name: Create Supabase Table (run once)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create brvm_cotation_journaliere table
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          PGPASSWORD="$DB_PASSWORD" psql \
+            "postgresql://postgres.lfftggyzaesvgszdycbi@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" \
+            -c "
+            CREATE TABLE IF NOT EXISTS brvm_cotation_journaliere (
+              id BIGSERIAL PRIMARY KEY,
+              date DATE NOT NULL,
+              ticker TEXT NOT NULL,
+              compagnie TEXT, secteur TEXT,
+              cours_precedent NUMERIC, cours_ouv NUMERIC, cours_cloture NUMERIC,
+              variation_jour NUMERIC, volume BIGINT, valeur_transigee BIGINT,
+              cours_reference NUMERIC, variation_ytd NUMERIC,
+              dernier_div NUMERIC, date_div TEXT, rendement_net NUMERIC, per NUMERIC,
+              created_at TIMESTAMPTZ DEFAULT NOW(),
+              UNIQUE (date, ticker)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cj ON brvm_cotation_journaliere (ticker, date DESC);
+            ALTER TABLE brvm_cotation_journaliere ENABLE ROW LEVEL SECURITY;
+            DO \$\$ BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE tablename = 'brvm_cotation_journaliere' AND policyname = 'read'
+              ) THEN
+                CREATE POLICY \"read\" ON brvm_cotation_journaliere FOR SELECT TO anon USING (true);
+              END IF;
+            END \$\$;
+            SELECT 'Table created successfully!' as result;
+            "
