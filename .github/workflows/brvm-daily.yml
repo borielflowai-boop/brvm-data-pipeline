@@ -1,0 +1,49 @@
+name: BRVM Daily Data Fetch
+
+on:
+  schedule:
+    # 17:30 UTC = 18:30 WAT (market closes ~15:30, bulletin published ~16:30)
+    - cron: '30 17 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Specific date to process (YYYY-MM-DD), leave empty for today'
+        required: false
+      backfill:
+        description: 'Number of past trading days to backfill'
+        required: false
+
+jobs:
+  fetch-bulletin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install pdfplumber requests
+
+      - name: Run parser (scheduled / specific date)
+        if: ${{ !inputs.backfill }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            python scraper/brvm_parser.py --date "${{ inputs.date }}"
+          else
+            python scraper/brvm_parser.py
+          fi
+
+      - name: Run parser (backfill)
+        if: ${{ inputs.backfill }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scraper/brvm_parser.py --backfill ${{ inputs.backfill }}
