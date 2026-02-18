@@ -35,9 +35,9 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           if [ -n "${{ inputs.date }}" ]; then
-            python scraper/brvm_parser.py --date "${{ inputs.date }}"
+            python brvm_parser.py --date "${{ inputs.date }}"
           else
-            python scraper/brvm_parser.py
+            python brvm_parser.py
           fi
 
       - name: Run parser (backfill)
@@ -45,4 +45,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python scraper/brvm_parser.py --backfill ${{ inputs.backfill }}
+        run: python brvm_parser.py --backfill ${{ inputs.backfill }}
