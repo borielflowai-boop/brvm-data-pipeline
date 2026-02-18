@@ -7,12 +7,29 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     steps:
+      - name: Find correct pooler region
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          for region in eu-west-1 eu-west-2 eu-central-1 us-east-1 us-west-1 ap-southeast-1; do
+            echo "Trying $region..."
+            result=$(PGPASSWORD="$DB_PASSWORD" psql \
+              "postgresql://postgres.lfftggyzaesvgszdycbi@aws-0-${region}.pooler.supabase.com:6543/postgres" \
+              -c "SELECT 1" 2>&1 || true)
+            echo "$result"
+            if echo "$result" | grep -q "1 row"; then
+              echo "✅ Found region: $region"
+              echo "REGION=$region" >> $GITHUB_ENV
+              break
+            fi
+          done
+
       - name: Create brvm_cotation_journaliere table
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           PGPASSWORD="$DB_PASSWORD" psql \
-            "postgresql://postgres.lfftggyzaesvgszdycbi@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" \
+            "postgresql://postgres.lfftggyzaesvgszdycbi@aws-0-${REGION}.pooler.supabase.com:6543/postgres" \
             -c "
             CREATE TABLE IF NOT EXISTS brvm_cotation_journaliere (
               id BIGSERIAL PRIMARY KEY,
