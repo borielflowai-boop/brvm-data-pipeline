@@ -10,15 +10,26 @@ jobs:
       - name: Install psycopg2
         run: pip install psycopg2-binary
 
-      - name: Create table via Python
+      - name: Create table via Python (IPv4 forced)
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           python3 << 'PYEOF'
-          import psycopg2, os, sys
+          import psycopg2, os, sys, socket
 
           password = os.environ["DB_PASSWORD"]
           ref = "lfftggyzaesvgszdycbi"
+          db_host = f"db.{ref}.supabase.co"
+
+          # Resolve hostname — prefer IPv4 (AF_INET)
+          print(f"Resolving {db_host}...", flush=True)
+          try:
+              results = socket.getaddrinfo(db_host, 5432, socket.AF_INET, socket.SOCK_STREAM)
+              ipv4 = results[0][4][0]
+              print(f"  IPv4: {ipv4}")
+          except Exception as e:
+              print(f"  DNS failed: {e}")
+              sys.exit(1)
 
           SQL = """
           CREATE TABLE IF NOT EXISTS brvm_cotation_journaliere (
@@ -36,52 +47,29 @@ jobs:
           CREATE INDEX IF NOT EXISTS idx_cj ON brvm_cotation_journaliere (ticker, date DESC);
           ALTER TABLE brvm_cotation_journaliere ENABLE ROW LEVEL SECURITY;
           """
-
           POLICY_SQL = """
           DO $$ BEGIN
             IF NOT EXISTS (
-              SELECT 1 FROM pg_policies
-              WHERE tablename = 'brvm_cotation_journaliere' AND policyname = 'read'
+              SELECT 1 FROM pg_policies WHERE tablename='brvm_cotation_journaliere' AND policyname='read'
             ) THEN
               CREATE POLICY "read" ON brvm_cotation_journaliere FOR SELECT TO anon USING (true);
             END IF;
           END $$;
           """
 
-          # Try all connection options
-          configs = [
-            # Direct connection (older Supabase projects)
-            {"host": f"db.{ref}.supabase.co",                               "port": 5432, "user": "postgres"},
-            # Pooler session mode port 5432
-            {"host": f"aws-0-eu-west-1.pooler.supabase.com",               "port": 5432, "user": f"postgres.{ref}"},
-            {"host": f"aws-0-eu-central-1.pooler.supabase.com",            "port": 5432, "user": f"postgres.{ref}"},
-            {"host": f"aws-0-us-east-1.pooler.supabase.com",               "port": 5432, "user": f"postgres.{ref}"},
-            {"host": f"aws-0-ap-southeast-1.pooler.supabase.com",          "port": 5432, "user": f"postgres.{ref}"},
-            # Pooler transaction mode port 6543
-            {"host": f"aws-0-eu-west-1.pooler.supabase.com",               "port": 6543, "user": f"postgres.{ref}"},
-            {"host": f"aws-0-eu-central-1.pooler.supabase.com",            "port": 6543, "user": f"postgres.{ref}"},
-            {"host": f"aws-0-us-east-1.pooler.supabase.com",               "port": 6543, "user": f"postgres.{ref}"},
-          ]
-
-          conn = None
-          for cfg in configs:
-              print(f"Trying {cfg['host']}:{cfg['port']} user={cfg['user']}...", flush=True)
-              try:
-                  conn = psycopg2.connect(
-                      host=cfg["host"], port=cfg["port"],
-                      user=cfg["user"],
-                      password=password,
-                      dbname="postgres",
-                      sslmode="require",
-                      connect_timeout=10
-                  )
-                  print(f"✅ Connected!")
-                  break
-              except Exception as e:
-                  print(f"  ❌ {e}")
-
-          if not conn:
-              print("ERROR: Could not connect to Supabase")
+          print(f"Connecting to {ipv4}:5432...", flush=True)
+          try:
+              conn = psycopg2.connect(
+                  host=ipv4, port=5432,
+                  user="postgres",
+                  password=password,
+                  dbname="postgres",
+                  sslmode="require",
+                  connect_timeout=15
+              )
+              print("✅ Connected!")
+          except Exception as e:
+              print(f"❌ Connection failed: {e}")
               sys.exit(1)
 
           cur = conn.cursor()
