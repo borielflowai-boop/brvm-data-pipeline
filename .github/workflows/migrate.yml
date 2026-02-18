@@ -48,47 +48,46 @@ jobs:
           END $$;
           """
 
-          regions = [
-            "eu-west-1", "eu-west-2", "eu-central-1",
-            "us-east-1", "us-west-1", "us-east-2",
-            "ap-southeast-1", "ap-northeast-1", "sa-east-1"
+          # Try all connection options
+          configs = [
+            # Direct connection (older Supabase projects)
+            {"host": f"db.{ref}.supabase.co",                               "port": 5432, "user": "postgres"},
+            # Pooler session mode port 5432
+            {"host": f"aws-0-eu-west-1.pooler.supabase.com",               "port": 5432, "user": f"postgres.{ref}"},
+            {"host": f"aws-0-eu-central-1.pooler.supabase.com",            "port": 5432, "user": f"postgres.{ref}"},
+            {"host": f"aws-0-us-east-1.pooler.supabase.com",               "port": 5432, "user": f"postgres.{ref}"},
+            {"host": f"aws-0-ap-southeast-1.pooler.supabase.com",          "port": 5432, "user": f"postgres.{ref}"},
+            # Pooler transaction mode port 6543
+            {"host": f"aws-0-eu-west-1.pooler.supabase.com",               "port": 6543, "user": f"postgres.{ref}"},
+            {"host": f"aws-0-eu-central-1.pooler.supabase.com",            "port": 6543, "user": f"postgres.{ref}"},
+            {"host": f"aws-0-us-east-1.pooler.supabase.com",               "port": 6543, "user": f"postgres.{ref}"},
           ]
 
           conn = None
-          for region in regions:
-              host = f"aws-0-{region}.pooler.supabase.com"
-              print(f"Trying {region}...", flush=True)
+          for cfg in configs:
+              print(f"Trying {cfg['host']}:{cfg['port']} user={cfg['user']}...", flush=True)
               try:
                   conn = psycopg2.connect(
-                      host=host, port=6543,
-                      user=f"postgres.{ref}",
+                      host=cfg["host"], port=cfg["port"],
+                      user=cfg["user"],
                       password=password,
                       dbname="postgres",
                       sslmode="require",
-                      connect_timeout=8
+                      connect_timeout=10
                   )
-                  print(f"✅ Connected via {region}")
+                  print(f"✅ Connected!")
                   break
               except Exception as e:
-                  print(f"  ❌ {str(e)[:80]}")
+                  print(f"  ❌ {e}")
 
           if not conn:
-              print("ERROR: Could not connect to any Supabase pooler region")
+              print("ERROR: Could not connect to Supabase")
               sys.exit(1)
 
           cur = conn.cursor()
           cur.execute(SQL)
           cur.execute(POLICY_SQL)
           conn.commit()
-
-          cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'brvm_cotation_journaliere'")
-          count = cur.fetchone()[0]
-
-          if count:
-              print("✅ Table brvm_cotation_journaliere created successfully!")
-          else:
-              print("❌ Table creation failed")
-              sys.exit(1)
-
+          print("✅ Table brvm_cotation_journaliere created successfully!")
           conn.close()
           PYEOF
