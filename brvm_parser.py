@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+SUPABASE_MAX_RETRIES = max(1, int(os.environ.get("SUPABASE_MAX_RETRIES", "4")))
+SUPABASE_TIMEOUT_SECS = max(5, int(os.environ.get("SUPABASE_TIMEOUT_SECS", "30")))
+SUPABASE_RETRY_DELAY_SECS = max(1, int(os.environ.get("SUPABASE_RETRY_DELAY_SECS", "5")))
 
 BOC_URL = "https://www.brvm.org/sites/default/files/boc_{date}_2.pdf"
 
@@ -184,6 +187,10 @@ def parse_bulletin(pdf_bytes: bytes, bulletin_date: date) -> list[dict]:
 # Supabase upsert
 # ---------------------------------------------------------------------------
 
+def is_retryable_supabase_status(status_code: int) -> bool:
+    return status_code in {408, 425, 429, 500, 502, 503, 504}
+
+
 def upsert_to_supabase(records: list[dict]) -> bool:
     if not records:
         log.warning("No records to upsert")
@@ -192,7 +199,7 @@ def upsert_to_supabase(records: list[dict]) -> bool:
         log.error("SUPABASE_URL and SUPABASE_SERVICE_KEY env vars required")
         return False
 
-    url = f"{SUPABASE_URL}/rest/v1/brvm_cotation_journaliere"
+    url = f"{SUPABASE_URL}/rest/v1/brvm_cotation_journaliere?on_conflict=date,ticker"
     headers = {
         "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -200,14 +207,36 @@ def upsert_to_supabase(records: list[dict]) -> bool:
         "Prefer":        "resolution=merge-duplicates",  # upsert on conflict
     }
 
-    # Batch upsert (Supabase REST handles arrays)
-    r = requests.post(url, json=records, headers=headers, timeout=30)
-    if r.status_code in (200, 201):
-        log.info(f"✅ Upserted {len(records)} records to Supabase")
-        return True
-    else:
-        log.error(f"Supabase error {r.status_code}: {r.text[:500]}")
+    for attempt in range(1, SUPABASE_MAX_RETRIES + 1):
+        try:
+            r = requests.post(url, json=records, headers=headers, timeout=SUPABASE_TIMEOUT_SECS)
+        except requests.RequestException as e:
+            if attempt == SUPABASE_MAX_RETRIES:
+                log.error(f"Supabase request failed after {attempt}/{SUPABASE_MAX_RETRIES} attempts: {e}")
+                return False
+            delay = SUPABASE_RETRY_DELAY_SECS * attempt
+            log.warning(f"Supabase request error attempt {attempt}/{SUPABASE_MAX_RETRIES}: {e}; retry in {delay}s")
+            time.sleep(delay)
+            continue
+
+        if r.status_code in (200, 201, 204):
+            log.info(f"✅ Upserted {len(records)} records to Supabase")
+            return True
+
+        response_excerpt = (r.text or "")[:500].replace("\n", " ")
+        if is_retryable_supabase_status(r.status_code) and attempt < SUPABASE_MAX_RETRIES:
+            delay = SUPABASE_RETRY_DELAY_SECS * attempt
+            log.warning(
+                f"Supabase transient error {r.status_code} attempt {attempt}/{SUPABASE_MAX_RETRIES}: "
+                f"{response_excerpt}; retry in {delay}s"
+            )
+            time.sleep(delay)
+            continue
+
+        log.error(f"Supabase error {r.status_code}: {response_excerpt}")
         return False
+
+    return False
 
 
 # ---------------------------------------------------------------------------

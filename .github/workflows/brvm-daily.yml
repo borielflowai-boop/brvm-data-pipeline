@@ -26,7 +26,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pdfplumber requests
+        run: pip install -r requirements.txt
 
       - name: Run parser (scheduled / specific date)
         if: ${{ !inputs.backfill }}
@@ -34,10 +34,29 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
+          run_with_retries() {
+            local max_attempts=3
+            local attempt=1
+            while [ "$attempt" -le "$max_attempts" ]; do
+              echo "Parser attempt ${attempt}/${max_attempts}"
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Parser failed after ${max_attempts} attempts."
+                return 1
+              fi
+              local delay=$((attempt * 20))
+              echo "Retrying in ${delay}s..."
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
+          }
+
           if [ -n "${{ inputs.date }}" ]; then
-            python brvm_parser.py --date "${{ inputs.date }}"
+            run_with_retries python brvm_parser.py --date "${{ inputs.date }}"
           else
-            python brvm_parser.py
+            run_with_retries python brvm_parser.py
           fi
 
       - name: Run parser (backfill)
@@ -45,4 +64,24 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python brvm_parser.py --backfill ${{ inputs.backfill }}
+        run: |
+          run_with_retries() {
+            local max_attempts=3
+            local attempt=1
+            while [ "$attempt" -le "$max_attempts" ]; do
+              echo "Parser attempt ${attempt}/${max_attempts}"
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Parser failed after ${max_attempts} attempts."
+                return 1
+              fi
+              local delay=$((attempt * 20))
+              echo "Retrying in ${delay}s..."
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          run_with_retries python brvm_parser.py --backfill "${{ inputs.backfill }}"
